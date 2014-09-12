@@ -1,0 +1,243 @@
+# Author:  Daniel Rockhold SDOT IS GIS
+# Date:    September 5, 2014
+# Version: ArcGIS 10.1, Python 2.7.4
+# Purpose: This script will iterate through each MXD in a folder and report information about each
+#          map document, it's data frames and layers.  The script is intended to run from a script
+#          tool that requires three input parameters:
+#               1) folder containing MXDs,
+#               2) an output text file.
+#				3) a value list of fields to be included in the CSV output
+#
+#          The resulting csv file will automatically open.
+
+import arcpy, datetime, os, csv
+
+
+def removeCarriages(str): #Method to take a string input and replace all carriage returns with "     " to allow for addition to a csv
+	outStr = '   '.join(str.splitlines())
+	return outStr
+
+def dsLister(mxd):
+	for lyr in arcpy.mapping.ListLayers(mxd):
+		if lyr.isBroken:
+			if lyr.supports("DATASOURCE"):
+				dsList.append([str(lyr.dataSource), str(lyr.longName)])
+			else:
+				dsList.append([str(lyr.serviceProperties.get('URL', 'N/A')), str(lyr.longName)])
+	dsList.sort(key = lambda x: x[0])
+	return dsList
+	
+try:
+	arcpy.gp.overwriteOutput = True
+	
+    #Read input parameters from GP dialog
+	MXDFolderPath = arcpy.GetParameterAsText(0)
+	output = arcpy.GetParameterAsText(1)  
+	#
+	FIELDS = []
+	#Initialize a list to carry the field headers with MXD Name, Data Frame, and 'Full Path of Layer' defaulted
+	FIELDS.extend(['Broken','Data Source/URL','Long Name','MXD Name'])
+	
+	rowDict = {}
+	#Populate FIELDS with those Fields chosen in the input
+	for field in arcpy.GetParameterAsText(3).split(";"):
+		FIELDS.append(field.replace("'",''))
+		#rowDict[field] = 'EMPTY'
+	
+	dictList = [rowDict,rowDict]
+	#Opens the outfile, removes '.txt' and replaces with the date and time and '.csv'
+	with open(output.rsplit( ".", 1 )[ 0 ] + str(datetime.datetime.today().strftime("%d%b%Y_%H;%M")) + '.csv', 'wb') as outFile:
+		output = output.rsplit( ".", 1 )[ 0 ] + str(datetime.datetime.today().strftime("%d%b%Y_%H;%M")) + '.csv'
+		
+
+		writer = csv.DictWriter(outFile, fieldnames = FIELDS, dialect = 'excel' )
+		
+		#Write out Document Metadata to top left of CSV
+		#metawriter = csv.writer(outFile, dialect = 'excel')
+		#metawriter.writerows([['LAYER REPORT CSV','','','','','Key','N/A = Not Supported'], 
+		#	['Date:' + str(datetime.datetime.today().strftime("%B %d %Y"))],
+		#	['Location:' + MXDFolderPath],
+		#	['	']
+		#])
+			
+		writer.writeheader()
+				
+
+		#Loop through each MXD file
+		mapCount = 0
+		for filename in os.listdir(MXDFolderPath):
+			fullpath = os.path.join(MXDFolderPath, filename)
+			if os.path.isfile(fullpath):
+				if filename.lower().endswith(".mxd"):
+					mapCount = 1 #Begin Counting mxds
+					
+					mxd = arcpy.mapping.MapDocument(fullpath)
+					DFList = arcpy.mapping.ListDataFrames(mxd)
+					for df in DFList:
+						lyrList = arcpy.mapping.ListLayers(mxd, "", df)
+						for lyr in lyrList: #Iterate through the layers of the MXD and report broken layers
+							
+							#for field in FIELDS:
+							#	rowDict[field] = ''
+							
+							
+							#if not lyr.isGroupLayer:
+								
+							
+							if lyr.supports("DATASOURCE"):
+								rowDict['Data Source/URL'] = str(lyr.dataSource)
+							elif lyr.supports("SERVICEPROPERTIES"):
+								rowDict['Data Source/URL'] = str(lyr.serviceProperties.get('URL', 'N/A'))
+							else:
+								rowDict['Data Source/URL'] = "GROUP LAYER GET LOST"
+						
+						
+							if arcpy.GetParameterAsText(2):#if layer.isbroken
+									if lyr.isBroken:
+										rowDict['Broken'] = 'YES'
+									else:
+										rowDict['Broken'] = ''
+									
+							#Write the layer name, long name and visibility to the dictionary
+							if 'Layer Name' in FIELDS:
+								rowDict['Layer Name'] = lyr.name
+							else:
+								rowDict['Layer Name'] = "AAAAAAAAAAAAAAAAAAAAAAAAAAAHHHHHHHHHHHHHHHHHHH!"
+							if 'Long Name' in FIELDS:
+								rowDict['Long Name'] = lyr.longName
+							if 'Visibility' in FIELDS:
+								rowDict['Visibility'] = lyr.visible
+							
+							#Look for a description
+							if 'Description' in FIELDS:
+								if lyr.supports('DESCRIPTION'):
+									if not str(lyr.description):#report no description
+										rowDict['Description'] = 'None'
+										
+									else:#write out layer description, minus all carriage returns 
+										rowDict['Description'] = removeCarriages(lyr.description)
+									
+								else: #report that Descriptions are not Supported
+									rowDict['Description'] = 'N/A'
+								
+							#Look for Labels				
+							if lyr.supports("SHOWLABELS"):#Report 'True' or 'False'
+								if 'Labels On' in FIELDS:
+									rowDict['Labels On'] = str(lyr.showLabels)
+								if lyr.showLabels == True: #report classname, label expresion, and SQLQuery
+									for labelClass in lyr.labelClasses:
+										if 'Label Class Name' in FIELDS:
+											rowDict['Label Class Name'] = str(labelClass.className)
+										if 'Label Expression' in FIELDS:
+											rowDict['Label Expression'] = str(labelClass.expression)
+										if 'Label SQL Query' in FIELDS:
+											rowDict['Label SQL Query'] = str(labelClass.SQLQuery)
+								else:#Fill three cells with 'Not Shown'
+									if 'Label Class Name' in FIELDS:
+										rowDict['Label Class Name'] = 'Not Shown'
+									if 'Label Expression' in FIELDS:
+										rowDict['Label Expression'] = 'Not Shown'
+									if 'Label SQL Query' in FIELDS:
+										rowDict['Label SQL Query'] = 'Not Shown'		
+							else:#if labels are unsupported, the className, Expression, and SQLQuery Fields are left blank
+								if 'Labels On' in FIELDS:	
+									rowDict['Labels On'] = 'No Labels'
+								if 'Label Class Name' in FIELDS:
+									rowDict['Label Class Name'] = ''
+								if 'Label Expression' in FIELDS:
+									rowDict['Label Expression'] = ''
+								if 'Label SQL Query' in FIELDS:	
+									rowDict['Label SQL Query'] = ''
+							
+							if 'Def Query' in FIELDS:
+								if lyr.supports("DEFINITIONQUERY"):#Write out definition query without carriage returns
+									rowDict['Def Query'] = removeCarriages(str(lyr.definitionQuery))	
+								else:# report that Defintion queries are not supported
+									rowDict['Def Query'] = 'N/A'
+							
+							if 'Transparency' in FIELDS:
+								if lyr.supports("TRANSPARENCY"):#Write out transparency
+									rowDict['Transparency'] = str(lyr.transparency)
+								else:#report N/A
+									rowDict['Transparency'] = 'N/A'
+									
+							if 'Brightness' in FIELDS:	
+								if lyr.supports("BRIGHTNESS"):#report brightness
+									rowDict['Brightness']= str(lyr.brightness)
+								else:# report N/A
+									rowDict['Brightness']= 'N/A'
+									
+							if 'Contrast' in FIELDS:	
+								if lyr.supports("CONTRAST"):#report contrast
+									rowDict['Contrast'] = str(lyr.contrast)
+								else:# report N/A
+									rowDict['Contrast'] = 'N/A'
+							
+							if 'Data Source' in FIELDS:
+								if lyr.supports("DATASOURCE"):
+									rowDict['Data Source'] = str(lyr.dataSource)
+								else:# report N/A
+									rowDict['Data Source'] = 'N/A'
+							
+							#write out Web and SDE services differently
+							if lyr.supports("SERVICEPROPERTIES"):#Report Service Type 
+								if 'Service Type' in FIELDS:
+									rowDict['Service Type'] = lyr.serviceProperties.get('ServiceType', 'N/A') 
+							
+								if lyr.serviceProperties["ServiceType"] == "SDE":
+									if 'Database' in FIELDS:
+										rowDict['Database'] = lyr.serviceProperties.get('Database', 'N/A')
+									if 'Server' in FIELDS:
+										rowDict['Server'] = lyr.serviceProperties.get('Server', 'N/A')
+									if 'Service' in FIELDS:
+										rowDict['Service'] = lyr.serviceProperties.get('Instance', 'N/A')
+									if 'Version' in FIELDS:
+										rowDict['Version'] = lyr.serviceProperties.get('Version', 'N/A')
+									if 'Username' in FIELDS:
+										rowDict['Username'] = lyr.serviceProperties.get('UserName', 'N/A')
+									if 'Authentication' in FIELDS:
+										rowDict['Authentication'] = lyr.serviceProperties.get('AuthenticationMode', 'N/A')
+									
+									
+								else:
+									
+									if 'URL' in FIELDS:
+										rowDict['URL'] = lyr.serviceProperties.get('URL', 'N/A')
+									if 'Connection' in FIELDS:
+										rowDict['Connection'] = lyr.serviceProperties.get('Connection', 'N/A')
+									if 'Server' in FIELDS:
+										rowDict['Server'] = lyr.serviceProperties.get('Server', 'N/A')
+									if 'Cache' in FIELDS:
+										rowDict['Cache'] = str(lyr.serviceProperties.get('Cache', 'N/A'))
+									if 'Password' in FIELDS:
+										rowDict['Password'] = lyr.serviceProperties.get('Password', 'N/A')
+								
+							dictList.append(rowDict)#add all attribute values for this 
+					
+						
+						
+					del mxd	
+			#Sort the dictionary list by Data Source
+		dictList.sort(key=lambda k: k['Data Source/URL'])
+				#Write the array to the row	
+		#for dicty in dictList:
+		writer.writerows(dictList)  
+							
+
+					
+				
+		if mapCount ==0:
+			outFile.write("                            NO MXD FILES FOUND \n")                          
+
+
+    #Open resulting text file
+	os.startfile(output)
+
+    #Delete variables that reference data on disk
+	del MXDFolderPath, output, outFile, fullpath, dictList, rowDict
+
+except Exception, e:
+  import traceback
+  map(arcpy.AddError, traceback.format_exc().split("\n"))
+  arcpy.AddError(str(e))
+
